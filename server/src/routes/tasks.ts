@@ -23,24 +23,26 @@ const taskSchema = z.object({ title: z.string().min(1) });
 r.use(requireUser);
 
 r.get("/", async (req: any, res) => {
-  const tasks = await prisma.task.findMany({ where: { userId: req.userId }, orderBy: { createdAt: "desc" }});
+  const tasks = await prisma.task.findMany({
+    where: { userId: req.userId },
+    orderBy: { createdAt: "desc" }
+  });
   res.json(tasks);
 });
 
 r.post("/", async (req: any, res) => {
   const parse = taskSchema.safeParse(req.body);
   if (!parse.success) return res.status(400).json(parse.error);
-  const task = await prisma.task.create({ data: { title: parse.data.title, userId: req.userId }});
+  const task = await prisma.task.create({
+    data: { title: parse.data.title, userId: req.userId }
+  });
   res.json(task);
 });
 
 r.patch("/:id", async (req: any, res) => {
   const { id } = req.params;
   const { title, done } = req.body as { title?: string; done?: boolean };
-  const task = await prisma.task.update({
-    where: { id },
-    data: { title, done }
-  });
+  const task = await prisma.task.update({ where: { id }, data: { title, done }});
   res.json(task);
 });
 
