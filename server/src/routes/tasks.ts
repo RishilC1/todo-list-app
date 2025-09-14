@@ -19,12 +19,27 @@ function requireUser(req: any, res: any, next: any) {
 }
 
 const taskSchema = z.object({ title: z.string().min(1) });
+const querySchema = z.object({
+  completed: z
+    .union([z.literal("true"), z.literal("false")])
+    .optional()
+});
 
 r.use(requireUser);
 
+/**
+ * GET /api/tasks?completed=true|false
+ * default: completed=false (active tasks)
+ */
 r.get("/", async (req: any, res) => {
+  const parsed = querySchema.safeParse(req.query);
+  const completed =
+    parsed.success && parsed.data.completed
+      ? parsed.data.completed === "true"
+      : false;
+
   const tasks = await prisma.task.findMany({
-    where: { userId: req.userId },
+    where: { userId: req.userId, done: completed },
     orderBy: { createdAt: "desc" }
   });
   res.json(tasks);
@@ -42,13 +57,16 @@ r.post("/", async (req: any, res) => {
 r.patch("/:id", async (req: any, res) => {
   const { id } = req.params;
   const { title, done } = req.body as { title?: string; done?: boolean };
-  const task = await prisma.task.update({ where: { id }, data: { title, done }});
+  const task = await prisma.task.update({
+    where: { id },
+    data: { title, done }
+  });
   res.json(task);
 });
 
 r.delete("/:id", async (req: any, res) => {
   const { id } = req.params;
-  await prisma.task.delete({ where: { id }});
+  await prisma.task.delete({ where: { id } });
   res.json({ ok: true });
 });
 
