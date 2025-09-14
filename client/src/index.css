@@ -66,3 +66,16 @@ button:focus-visible {
     background-color: #f9f9f9;
   }
 }
+/* Minimal auth to match mock */
+
+.auth-min{ min-height:100vh; display:grid; place-items:center; background:#fff; }
+.auth-box{ width:min(90vw,360px); display:grid; justify-items:center; gap:14px; }
+.brand{ font-size:32px; font-weight:600; margin:0 0 12px; text-align:center; }
+.auth-input{ width:100%; padding:8px 10px; border:1px solid #e5e7eb; border-radius:8px; text-align:center; }
+.auth-button{ width:140px; padding:8px 0; border:1px solid #e5e7eb; border-radius:8px; background:#fff; cursor:pointer; }
+.auth-switch{ margin-top:4px; font-size:14px; text-align:center; }
+.auth-switch a{ text-decoration:underline; color:inherit; }
+.auth-error{ color:#dc2626; margin:0; font-size:14px; text-align:center; }
+  
+  /* make sure nothing else is pushing content */
+  body, #root { height:100%; margin:0; }
