@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
 
+type Category = "WORK" | "PERSONAL";
+
 type Task = {
   id: string;
   title: string;
   done: boolean;
-  createdAt: string;            // comes from backend
-  completedAt?: string | null;  // null if not completed
+  createdAt: string;
+  completedAt?: string | null;
+  category: Category;
 };
 
 function formatDate(dt?: string | null) {
@@ -15,28 +18,39 @@ function formatDate(dt?: string | null) {
 }
 
 export default function App() {
-  /** ---------- Auth state ---------- */
+  // Auth
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [pwd, setPwd] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [authed, setAuthed] = useState(false);
 
-  /** ---------- Task state ---------- */
+  // Tasks
   const [active, setActive] = useState<Task[]>([]);
   const [completed, setCompleted] = useState<Task[]>([]);
   const [title, setTitle] = useState("");
   const [tab, setTab] = useState<"active" | "completed">("active");
 
-  /** ---------- Editing state ---------- */
+  // Category filter (All/Work/Personal)
+  const [catFilter, setCatFilter] = useState<"ALL" | Category>("ALL");
+
+  // Category selector for adding
+  const [newCat, setNewCat] = useState<Category>("PERSONAL");
+
+  // Editing
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
+  const [editingCat, setEditingCat] = useState<Category>("PERSONAL");
 
-  /** ---------- Helpers ---------- */
   async function loadLists() {
+    const q = (completed: boolean) => {
+      const params = new URLSearchParams({ completed: String(completed) });
+      if (catFilter !== "ALL") params.set("category", catFilter);
+      return params.toString();
+    };
     const [a, c] = await Promise.all([
-      api.get("tasks?completed=false").json<Task[]>(),
-      api.get("tasks?completed=true").json<Task[]>(),
+      api.get(`tasks?${q(false)}`).json<Task[]>(),
+      api.get(`tasks?${q(true)}`).json<Task[]>(),
     ]);
     setActive(a);
     setCompleted(c);
@@ -44,14 +58,19 @@ export default function App() {
   }
 
   useEffect(() => {
-    // try existing session
     fetch("http://localhost:4000/api/auth/me", { credentials: "include" })
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then(() => loadLists())
       .catch(() => setAuthed(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** ---------- Auth actions ---------- */
+  // reload lists when filter changes
+  useEffect(() => {
+    if (authed) loadLists();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catFilter]);
+
   async function signin() {
     setMsg(null);
     const res = await fetch("http://localhost:4000/api/auth/signin", {
@@ -62,7 +81,7 @@ export default function App() {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      setMsg(body?.message || "Internal error");
+      setMsg((body as any)?.message || "Internal error");
       return;
     }
     await loadLists();
@@ -78,7 +97,7 @@ export default function App() {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      setMsg(body?.message || "Internal error");
+      setMsg((body as any)?.message || "Internal error");
       return;
     }
     await loadLists();
@@ -97,18 +116,29 @@ export default function App() {
     setMode("signin");
   }
 
-  /** ---------- Task actions ---------- */
   async function addTask() {
-    if (!title.trim()) return;
-    const t = await api.post("tasks", { json: { title } }).json<Task>();
-    setActive([t, ...active]);
-    setTitle("");
-    if (tab !== "active") setTab("active");
+    const t = title.trim();
+    if (!t) return;
+    try {
+      const newTask = await api
+        .post("tasks", { json: { title: t, category: newCat } })
+        .json<Task>();
+      // place into the correct list (respect current filter)
+      if (catFilter === "ALL" || catFilter === newTask.category) {
+        setActive([newTask, ...active]);
+      }
+      setTitle("");
+      setNewCat("PERSONAL");
+      if (tab !== "active") setTab("active");
+    } catch (e: any) {
+      setMsg(e?.message || "Failed to add task");
+    }
   }
 
   function beginEdit(t: Task) {
     setEditingId(t.id);
     setEditingTitle(t.title);
+    setEditingCat(t.category);
   }
   function cancelEdit() {
     setEditingId(null);
@@ -116,15 +146,31 @@ export default function App() {
   }
   async function saveEdit(t: Task) {
     const nt = editingTitle.trim();
-    if (!nt || nt === t.title) {
+    const patch: Partial<Pick<Task, "title" | "category">> = {};
+    if (nt && nt !== t.title) patch.title = nt;
+    if (editingCat !== t.category) patch.category = editingCat;
+    if (!Object.keys(patch).length) {
       cancelEdit();
       return;
     }
-    const updated = await api
-      .patch(`tasks/${t.id}`, { json: { title: nt } })
-      .json<Task>();
-    if (!t.done) setActive(active.map((x) => (x.id === t.id ? updated : x)));
-    else setCompleted(completed.map((x) => (x.id === t.id ? updated : x)));
+    const updated = await api.patch(`tasks/${t.id}`, { json: patch }).json<Task>();
+
+    // If category changed and no longer matches filter, we might remove it
+    const applyUpdate = (arr: Task[]) => arr.map((x) => (x.id === t.id ? updated : x));
+
+    if (!t.done) {
+      let next = applyUpdate(active);
+      if (catFilter !== "ALL" && updated.category !== catFilter) {
+        next = next.filter((x) => x.id !== t.id);
+      }
+      setActive(next);
+    } else {
+      let next = applyUpdate(completed);
+      if (catFilter !== "ALL" && updated.category !== catFilter) {
+        next = next.filter((x) => x.id !== t.id);
+      }
+      setCompleted(next);
+    }
     cancelEdit();
   }
 
@@ -134,10 +180,15 @@ export default function App() {
       .json<Task>();
     if (from === "active") {
       setActive(active.filter((x) => x.id !== task.id));
-      setCompleted([updated, ...completed]);
+      // respect current filter before placing into completed
+      if (catFilter === "ALL" || updated.category === catFilter) {
+        setCompleted([updated, ...completed]);
+      }
     } else {
       setCompleted(completed.filter((x) => x.id !== task.id));
-      setActive([updated, ...active]);
+      if (catFilter === "ALL" || updated.category === catFilter) {
+        setActive([updated, ...active]);
+      }
     }
   }
 
@@ -147,9 +198,7 @@ export default function App() {
     else setCompleted(completed.filter((x) => x.id !== task.id));
   }
 
-  /** =====================================================================
-   *  AUTH JSX (shown when not authenticated)
-   * ===================================================================== */
+  // AUTH VIEW
   if (!authed) {
     return (
       <div className="auth-min">
@@ -219,9 +268,7 @@ export default function App() {
     );
   }
 
-  /** =====================================================================
-   *  TASKS JSX (shown when authenticated)
-   * ===================================================================== */
+  // TASKS VIEW
   const list = tab === "active" ? active : completed;
 
   return (
@@ -229,9 +276,24 @@ export default function App() {
       <div className="tasks-card">
         <div className="app-header">
           <h2 className="title">Tasks</h2>
-          <button className="btn" onClick={signout}>
-            Sign out
-          </button>
+          <button className="btn" onClick={signout}>Sign out</button>
+        </div>
+
+        {/* Category Filter */}
+        <div className="filters" style={{ marginTop: 10, display: "flex", gap: 8 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ color: "#64748b", fontSize: 14 }}>Category:</span>
+            <select
+              className="input"
+              style={{ width: 180 }}
+              value={catFilter}
+              onChange={(e) => setCatFilter(e.target.value as any)}
+            >
+              <option value="ALL">All</option>
+              <option value="WORK">Work</option>
+              <option value="PERSONAL">Personal</option>
+            </select>
+          </label>
         </div>
 
         <div className="tabs">
@@ -258,9 +320,16 @@ export default function App() {
               onChange={(e) => setTitle(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && addTask()}
             />
-            <button className="btn primary" onClick={addTask}>
-              Add
-            </button>
+            <select
+              className="input"
+              style={{ width: 160 }}
+              value={newCat}
+              onChange={(e) => setNewCat(e.target.value as Category)}
+            >
+              <option value="PERSONAL">Personal</option>
+              <option value="WORK">Work</option>
+            </select>
+            <button className="btn primary" onClick={addTask}>Add</button>
           </div>
         )}
 
@@ -281,14 +350,13 @@ export default function App() {
                   <div className="task-main">
                     <div className="item-title">{t.title}</div>
                     <div className="meta">
-                      <span>Created: {formatDate(t.createdAt)}</span>
-                      {t.completedAt && (
-                        <span> • Completed: {formatDate(t.completedAt)}</span>
-                      )}
+                      <span>{t.category === "WORK" ? "Work" : "Personal"}</span>
+                      <span> • Created: {formatDate(t.createdAt)}</span>
+                      {t.completedAt && <span> • Completed: {formatDate(t.completedAt)}</span>}
                     </div>
                   </div>
                 ) : (
-                  <div className="task-edit">
+                  <div className="task-edit" style={{ display: "grid", gap: 6, flex: 1 }}>
                     <input
                       className="input"
                       value={editingTitle}
@@ -296,26 +364,26 @@ export default function App() {
                       onKeyDown={(e) => e.key === "Enter" && saveEdit(t)}
                       autoFocus
                     />
+                    <select
+                      className="input"
+                      value={editingCat}
+                      onChange={(e) => setEditingCat(e.target.value as Category)}
+                    >
+                      <option value="PERSONAL">Personal</option>
+                      <option value="WORK">Work</option>
+                    </select>
                   </div>
                 )}
 
                 {!isEditing ? (
                   <>
-                    <button className="btn" onClick={() => beginEdit(t)}>
-                      Edit
-                    </button>
-                    <button className="btn danger" onClick={() => remove(t, from)}>
-                      Delete
-                    </button>
+                    <button className="btn" onClick={() => beginEdit(t)}>Edit</button>
+                    <button className="btn danger" onClick={() => remove(t, from)}>Delete</button>
                   </>
                 ) : (
                   <>
-                    <button className="btn primary" onClick={() => saveEdit(t)}>
-                      Save
-                    </button>
-                    <button className="btn" onClick={cancelEdit}>
-                      Cancel
-                    </button>
+                    <button className="btn primary" onClick={() => saveEdit(t)}>Save</button>
+                    <button className="btn" onClick={cancelEdit}>Cancel</button>
                   </>
                 )}
               </li>

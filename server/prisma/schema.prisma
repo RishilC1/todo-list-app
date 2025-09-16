@@ -15,13 +15,20 @@ model User {
   createdAt DateTime @default(now())
 }
 
-model Task {
-  id           String   @id @default(cuid())
-  title        String
-  done         Boolean  @default(false)
-  userId       String
-  user         User     @relation(fields: [userId], references: [id])
+enum Category {
+  WORK
+  PERSONAL
+}
 
-  createdAt    DateTime @default(now())
+model Task {
+  id           String    @id @default(cuid())
+  title        String
+  done         Boolean   @default(false)
+  userId       String
+  user         User      @relation(fields: [userId], references: [id])
+
+  createdAt    DateTime  @default(now())
   completedAt  DateTime?
+
+  category     Category  @default(PERSONAL)
 }
