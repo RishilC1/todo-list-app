@@ -5,6 +5,7 @@ import cookieParser from "cookie-parser";
 
 import authRouter from "./routes/auth";
 import tasksRouter from "./routes/tasks";
+import accountRouter from "./routes/account";
 import { requireAuth } from "./middleware/requireAuth";
 
 const app = express();
@@ -31,7 +32,8 @@ app.get("/api/health", (_req: Request, res: Response) => res.json({ ok: true }))
 
 app.use("/api/auth", authRouter);
 
-// 🔐 protect all task endpoints so req.userId is set
+// protect account & tasks with auth
+app.use("/api/account", requireAuth, accountRouter);
 app.use("/api/tasks", requireAuth, tasksRouter);
 
 app.get("/", (_req, res) => res.send("API is running. Try /api/health"));

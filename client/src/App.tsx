@@ -12,35 +12,45 @@ type Task = {
   category: Category;
 };
 
+type AccountSummary = {
+  email: string;
+  createdAt: string;
+  activeCount: number;
+  completedCount: number;
+};
+
 function formatDate(dt?: string | null) {
   if (!dt) return "";
   return new Date(dt).toLocaleString();
 }
 
 export default function App() {
-  // Auth
+  // ---------- Auth ----------
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [pwd, setPwd] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [authed, setAuthed] = useState(false);
 
-  // Tasks
+  // ---------- Tasks ----------
   const [active, setActive] = useState<Task[]>([]);
   const [completed, setCompleted] = useState<Task[]>([]);
   const [title, setTitle] = useState("");
   const [tab, setTab] = useState<"active" | "completed">("active");
 
-  // Category filter (All/Work/Personal)
+  // Category filtering and selection
   const [catFilter, setCatFilter] = useState<"ALL" | Category>("ALL");
-
-  // Category selector for adding
   const [newCat, setNewCat] = useState<Category>("PERSONAL");
 
   // Editing
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [editingCat, setEditingCat] = useState<Category>("PERSONAL");
+
+  // Account modal
+  const [showAcct, setShowAcct] = useState(false);
+  const [acct, setAcct] = useState<AccountSummary | null>(null);
+  const [acctLoading, setAcctLoading] = useState(false);
 
   async function loadLists() {
     const q = (completed: boolean) => {
@@ -65,12 +75,12 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // reload lists when filter changes
   useEffect(() => {
     if (authed) loadLists();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [catFilter]);
 
+  // ---------- Auth actions ----------
   async function signin() {
     setMsg(null);
     const res = await fetch("http://localhost:4000/api/auth/signin", {
@@ -116,6 +126,7 @@ export default function App() {
     setMode("signin");
   }
 
+  // ---------- Tasks actions ----------
   async function addTask() {
     const t = title.trim();
     if (!t) return;
@@ -123,7 +134,6 @@ export default function App() {
       const newTask = await api
         .post("tasks", { json: { title: t, category: newCat } })
         .json<Task>();
-      // place into the correct list (respect current filter)
       if (catFilter === "ALL" || catFilter === newTask.category) {
         setActive([newTask, ...active]);
       }
@@ -155,7 +165,6 @@ export default function App() {
     }
     const updated = await api.patch(`tasks/${t.id}`, { json: patch }).json<Task>();
 
-    // If category changed and no longer matches filter, we might remove it
     const applyUpdate = (arr: Task[]) => arr.map((x) => (x.id === t.id ? updated : x));
 
     if (!t.done) {
@@ -180,7 +189,6 @@ export default function App() {
       .json<Task>();
     if (from === "active") {
       setActive(active.filter((x) => x.id !== task.id));
-      // respect current filter before placing into completed
       if (catFilter === "ALL" || updated.category === catFilter) {
         setCompleted([updated, ...completed]);
       }
@@ -198,7 +206,21 @@ export default function App() {
     else setCompleted(completed.filter((x) => x.id !== task.id));
   }
 
-  // AUTH VIEW
+  // ---------- Account modal ----------
+  async function openAccount() {
+    setShowAcct(true);
+    setAcctLoading(true);
+    try {
+      const data = await api.get("account").json<AccountSummary>();
+      setAcct(data);
+    } catch (e: any) {
+      setMsg(e?.message || "Failed to load account");
+    } finally {
+      setAcctLoading(false);
+    }
+  }
+
+  // ---------- AUTH VIEW ----------
   if (!authed) {
     return (
       <div className="auth-min">
@@ -268,7 +290,7 @@ export default function App() {
     );
   }
 
-  // TASKS VIEW
+  // ---------- TASKS VIEW ----------
   const list = tab === "active" ? active : completed;
 
   return (
@@ -276,10 +298,13 @@ export default function App() {
       <div className="tasks-card">
         <div className="app-header">
           <h2 className="title">Tasks</h2>
-          <button className="btn" onClick={signout}>Sign out</button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn" onClick={openAccount}>Account</button>
+            <button className="btn" onClick={signout}>Sign out</button>
+          </div>
         </div>
 
-        {/* Category Filter */}
+        {/* Category filter */}
         <div className="filters" style={{ marginTop: 10, display: "flex", gap: 8 }}>
           <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ color: "#64748b", fontSize: 14 }}>Category:</span>
@@ -352,7 +377,9 @@ export default function App() {
                     <div className="meta">
                       <span>{t.category === "WORK" ? "Work" : "Personal"}</span>
                       <span> • Created: {formatDate(t.createdAt)}</span>
-                      {t.completedAt && <span> • Completed: {formatDate(t.completedAt)}</span>}
+                      {t.completedAt && (
+                        <span> • Completed: {formatDate(t.completedAt)}</span>
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -391,6 +418,30 @@ export default function App() {
           })}
           {list.length === 0 && <li className="empty">No tasks here yet.</li>}
         </ul>
+
+        {/* Account modal */}
+        {showAcct && (
+          <div className="overlay" onClick={() => setShowAcct(false)}>
+            <div className="modal" onClick={(e) => e.stopPropagation()}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <h3 style={{ margin: 0 }}>Account</h3>
+                <button className="btn" onClick={() => setShowAcct(false)}>Close</button>
+              </div>
+
+              <div style={{ marginTop: 12 }}>
+                {acctLoading && <p className="meta">Loading…</p>}
+                {!acctLoading && acct && (
+                  <ul className="account-list">
+                    <li><strong>Email:</strong> {acct.email}</li>
+                    <li><strong>Created:</strong> {new Date(acct.createdAt).toLocaleString()}</li>
+                    <li><strong>Active tasks:</strong> {acct.activeCount}</li>
+                    <li><strong>Completed tasks:</strong> {acct.completedCount}</li>
+                  </ul>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
