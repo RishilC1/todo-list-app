@@ -2,14 +2,19 @@ import "dotenv/config";
 import express, { Request, Response } from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
+
 import authRouter from "./routes/auth";
 import tasksRouter from "./routes/tasks";
+import { requireAuth } from "./middleware/requireAuth";
 
 const app = express();
 
-const corsOrigins =
+const corsOrigins: (string | RegExp)[] =
   process.env.NODE_ENV === "production"
-    ? (process.env.CORS_ORIGIN || "").split(",").map(s => s.trim()).filter(Boolean)
+    ? (process.env.CORS_ORIGIN || "")
+        .split(",")
+        .map(s => s.trim())
+        .filter(Boolean)
     : [/^http:\/\/localhost:\d+$/];
 
 app.use(
@@ -23,8 +28,11 @@ app.use(express.json());
 app.use(cookieParser());
 
 app.get("/api/health", (_req: Request, res: Response) => res.json({ ok: true }));
+
 app.use("/api/auth", authRouter);
-app.use("/api/tasks", tasksRouter);
+
+// 🔐 protect all task endpoints so req.userId is set
+app.use("/api/tasks", requireAuth, tasksRouter);
 
 app.get("/", (_req, res) => res.send("API is running. Try /api/health"));
 

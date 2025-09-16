@@ -16,11 +16,12 @@ model User {
 }
 
 model Task {
-  id        String   @id @default(cuid())
-  title     String
-  done      Boolean  @default(false)
-  user      User     @relation(fields: [userId], references: [id])
-  userId    String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String   @id @default(cuid())
+  title        String
+  done         Boolean  @default(false)
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+
+  createdAt    DateTime @default(now())
+  completedAt  DateTime?
 }

@@ -1,7 +1,18 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
 
-type Task = { id: string; title: string; done: boolean };
+type Task = {
+  id: string;
+  title: string;
+  done: boolean;
+  createdAt: string;            // comes from backend
+  completedAt?: string | null;  // null if not completed
+};
+
+function formatDate(dt?: string | null) {
+  if (!dt) return "";
+  return new Date(dt).toLocaleString();
+}
 
 export default function App() {
   /** ---------- Auth state ---------- */
@@ -11,11 +22,15 @@ export default function App() {
   const [msg, setMsg] = useState<string | null>(null);
   const [authed, setAuthed] = useState(false);
 
-  /** ---------- Tasks state ---------- */
+  /** ---------- Task state ---------- */
   const [active, setActive] = useState<Task[]>([]);
   const [completed, setCompleted] = useState<Task[]>([]);
   const [title, setTitle] = useState("");
   const [tab, setTab] = useState<"active" | "completed">("active");
+
+  /** ---------- Editing state ---------- */
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
 
   /** ---------- Helpers ---------- */
   async function loadLists() {
@@ -91,6 +106,28 @@ export default function App() {
     if (tab !== "active") setTab("active");
   }
 
+  function beginEdit(t: Task) {
+    setEditingId(t.id);
+    setEditingTitle(t.title);
+  }
+  function cancelEdit() {
+    setEditingId(null);
+    setEditingTitle("");
+  }
+  async function saveEdit(t: Task) {
+    const nt = editingTitle.trim();
+    if (!nt || nt === t.title) {
+      cancelEdit();
+      return;
+    }
+    const updated = await api
+      .patch(`tasks/${t.id}`, { json: { title: nt } })
+      .json<Task>();
+    if (!t.done) setActive(active.map((x) => (x.id === t.id ? updated : x)));
+    else setCompleted(completed.map((x) => (x.id === t.id ? updated : x)));
+    cancelEdit();
+  }
+
   async function toggle(task: Task, from: "active" | "completed") {
     const updated = await api
       .patch(`tasks/${task.id}`, { json: { done: !task.done } })
@@ -111,7 +148,7 @@ export default function App() {
   }
 
   /** =====================================================================
-   *  AUTH JSX  (shown when not authenticated)
+   *  AUTH JSX (shown when not authenticated)
    * ===================================================================== */
   if (!authed) {
     return (
@@ -183,68 +220,110 @@ export default function App() {
   }
 
   /** =====================================================================
-   *  TASKS JSX  (shown when authenticated)
+   *  TASKS JSX (shown when authenticated)
    * ===================================================================== */
   const list = tab === "active" ? active : completed;
 
   return (
-    <div className="container">
-      <div className="app-header">
-        <h2 className="title">Tasks</h2>
-        <button className="btn" onClick={signout}>
-          Sign out
-        </button>
-      </div>
-
-      <div className="tabs">
-        <button
-          className={`tab ${tab === "active" ? "active" : ""}`}
-          onClick={() => setTab("active")}
-        >
-          Active ({active.length})
-        </button>
-        <button
-          className={`tab ${tab === "completed" ? "active" : ""}`}
-          onClick={() => setTab("completed")}
-        >
-          Completed ({completed.length})
-        </button>
-      </div>
-
-      {tab === "active" && (
-        <div className="add">
-          <input
-            className="input"
-            placeholder="New task..."
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && addTask()}
-          />
-          <button className="btn primary" onClick={addTask}>
-            Add
+    <div className="app-shell">
+      <div className="tasks-card">
+        <div className="app-header">
+          <h2 className="title">Tasks</h2>
+          <button className="btn" onClick={signout}>
+            Sign out
           </button>
         </div>
-      )}
 
-      <ul className="list">
-        {list.map((t) => (
-          <li key={t.id} className="item">
+        <div className="tabs">
+          <button
+            className={`tab ${tab === "active" ? "active" : ""}`}
+            onClick={() => setTab("active")}
+          >
+            Active ({active.length})
+          </button>
+          <button
+            className={`tab ${tab === "completed" ? "active" : ""}`}
+            onClick={() => setTab("completed")}
+          >
+            Completed ({completed.length})
+          </button>
+        </div>
+
+        {tab === "active" && (
+          <div className="add">
             <input
-              type="checkbox"
-              checked={t.done}
-              onChange={() => toggle(t, tab)}
-              title={tab === "active" ? "Complete task" : "Mark as active"}
+              className="input"
+              placeholder="New task..."
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && addTask()}
             />
-            <span className={`item-title ${t.done ? "done" : ""}`}>
-              {t.title}
-            </span>
-            <button className="btn danger" onClick={() => remove(t, tab)}>
-              Delete
+            <button className="btn primary" onClick={addTask}>
+              Add
             </button>
-          </li>
-        ))}
-        {list.length === 0 && <li className="empty">No tasks here yet.</li>}
-      </ul>
+          </div>
+        )}
+
+        <ul className="list">
+          {list.map((t) => {
+            const from = tab;
+            const isEditing = editingId === t.id;
+            return (
+              <li key={t.id} className="item">
+                <input
+                  type="checkbox"
+                  checked={t.done}
+                  onChange={() => toggle(t, from)}
+                  title={from === "active" ? "Complete task" : "Mark as active"}
+                />
+
+                {!isEditing ? (
+                  <div className="task-main">
+                    <div className="item-title">{t.title}</div>
+                    <div className="meta">
+                      <span>Created: {formatDate(t.createdAt)}</span>
+                      {t.completedAt && (
+                        <span> • Completed: {formatDate(t.completedAt)}</span>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="task-edit">
+                    <input
+                      className="input"
+                      value={editingTitle}
+                      onChange={(e) => setEditingTitle(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && saveEdit(t)}
+                      autoFocus
+                    />
+                  </div>
+                )}
+
+                {!isEditing ? (
+                  <>
+                    <button className="btn" onClick={() => beginEdit(t)}>
+                      Edit
+                    </button>
+                    <button className="btn danger" onClick={() => remove(t, from)}>
+                      Delete
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button className="btn primary" onClick={() => saveEdit(t)}>
+                      Save
+                    </button>
+                    <button className="btn" onClick={cancelEdit}>
+                      Cancel
+                    </button>
+                  </>
+                )}
+              </li>
+            );
+          })}
+          {list.length === 0 && <li className="empty">No tasks here yet.</li>}
+        </ul>
+      </div>
     </div>
   );
 }
