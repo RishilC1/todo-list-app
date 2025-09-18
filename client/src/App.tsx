@@ -32,30 +32,33 @@ export default function App() {
   const [msg, setMsg] = useState<string | null>(null);
   const [authed, setAuthed] = useState(false);
 
+  // ---------- Tabs ----------
+  const [statusTab, setStatusTab] = useState<"active" | "completed">("active");
+  const [catTab, setCatTab] = useState<Category>("PERSONAL");
+
   // ---------- Tasks ----------
   const [active, setActive] = useState<Task[]>([]);
   const [completed, setCompleted] = useState<Task[]>([]);
   const [title, setTitle] = useState("");
-  const [tab, setTab] = useState<"active" | "completed">("active");
 
-  // Category filtering and selection
-  const [catFilter, setCatFilter] = useState<"ALL" | Category>("ALL");
-  const [newCat, setNewCat] = useState<Category>("PERSONAL");
-
-  // Editing
+  // ---------- Editing ----------
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
-  const [editingCat, setEditingCat] = useState<Category>("PERSONAL");
 
-  // Account modal
+  // ---------- Info modal ----------
+  const [infoTask, setInfoTask] = useState<Task | null>(null);
+
+  // ---------- Account modal ----------
   const [showAcct, setShowAcct] = useState(false);
   const [acct, setAcct] = useState<AccountSummary | null>(null);
   const [acctLoading, setAcctLoading] = useState(false);
 
   async function loadLists() {
-    const q = (completed: boolean) => {
-      const params = new URLSearchParams({ completed: String(completed) });
-      if (catFilter !== "ALL") params.set("category", catFilter);
+    const q = (isCompleted: boolean) => {
+      const params = new URLSearchParams({
+        completed: String(isCompleted),
+        category: catTab,
+      });
       return params.toString();
     };
     const [a, c] = await Promise.all([
@@ -78,7 +81,7 @@ export default function App() {
   useEffect(() => {
     if (authed) loadLists();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [catFilter]);
+  }, [catTab]);
 
   // ---------- Auth actions ----------
   async function signin() {
@@ -132,14 +135,11 @@ export default function App() {
     if (!t) return;
     try {
       const newTask = await api
-        .post("tasks", { json: { title: t, category: newCat } })
+        .post("tasks", { json: { title: t, category: catTab } })
         .json<Task>();
-      if (catFilter === "ALL" || catFilter === newTask.category) {
-        setActive([newTask, ...active]);
-      }
+      if (statusTab === "active") setActive([newTask, ...active]);
       setTitle("");
-      setNewCat("PERSONAL");
-      if (tab !== "active") setTab("active");
+      setStatusTab("active");
     } catch (e: any) {
       setMsg(e?.message || "Failed to add task");
     }
@@ -148,7 +148,6 @@ export default function App() {
   function beginEdit(t: Task) {
     setEditingId(t.id);
     setEditingTitle(t.title);
-    setEditingCat(t.category);
   }
   function cancelEdit() {
     setEditingId(null);
@@ -156,29 +155,18 @@ export default function App() {
   }
   async function saveEdit(t: Task) {
     const nt = editingTitle.trim();
-    const patch: Partial<Pick<Task, "title" | "category">> = {};
-    if (nt && nt !== t.title) patch.title = nt;
-    if (editingCat !== t.category) patch.category = editingCat;
-    if (!Object.keys(patch).length) {
+    if (!nt || nt === t.title) {
       cancelEdit();
       return;
     }
-    const updated = await api.patch(`tasks/${t.id}`, { json: patch }).json<Task>();
-
-    const applyUpdate = (arr: Task[]) => arr.map((x) => (x.id === t.id ? updated : x));
+    const updated = await api
+      .patch(`tasks/${t.id}`, { json: { title: nt } })
+      .json<Task>();
 
     if (!t.done) {
-      let next = applyUpdate(active);
-      if (catFilter !== "ALL" && updated.category !== catFilter) {
-        next = next.filter((x) => x.id !== t.id);
-      }
-      setActive(next);
+      setActive(active.map((x) => (x.id === t.id ? updated : x)));
     } else {
-      let next = applyUpdate(completed);
-      if (catFilter !== "ALL" && updated.category !== catFilter) {
-        next = next.filter((x) => x.id !== t.id);
-      }
-      setCompleted(next);
+      setCompleted(completed.map((x) => (x.id === t.id ? updated : x)));
     }
     cancelEdit();
   }
@@ -189,14 +177,10 @@ export default function App() {
       .json<Task>();
     if (from === "active") {
       setActive(active.filter((x) => x.id !== task.id));
-      if (catFilter === "ALL" || updated.category === catFilter) {
-        setCompleted([updated, ...completed]);
-      }
+      setCompleted([updated, ...completed]);
     } else {
       setCompleted(completed.filter((x) => x.id !== task.id));
-      if (catFilter === "ALL" || updated.category === catFilter) {
-        setActive([updated, ...active]);
-      }
+      setActive([updated, ...active]);
     }
   }
 
@@ -291,76 +275,74 @@ export default function App() {
   }
 
   // ---------- TASKS VIEW ----------
-  const list = tab === "active" ? active : completed;
+  const list = statusTab === "active" ? active : completed;
 
   return (
     <div className="app-shell">
       <div className="tasks-card">
         <div className="app-header">
           <h2 className="title">Tasks</h2>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn" onClick={openAccount}>Account</button>
-            <button className="btn" onClick={signout}>Sign out</button>
-          </div>
+          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+  <button className="profile-btn" onClick={openAccount} title="Account">
+    <div className="avatar-icon">
+      <div className="avatar-head"></div>
+      <div className="avatar-body"></div>
+    </div>
+  </button>
+  <button className="btn" onClick={signout}>Sign out</button>
+</div>
+
         </div>
 
-        {/* Category filter */}
-        <div className="filters" style={{ marginTop: 10, display: "flex", gap: 8 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ color: "#64748b", fontSize: 14 }}>Category:</span>
-            <select
-              className="input"
-              style={{ width: 180 }}
-              value={catFilter}
-              onChange={(e) => setCatFilter(e.target.value as any)}
-            >
-              <option value="ALL">All</option>
-              <option value="WORK">Work</option>
-              <option value="PERSONAL">Personal</option>
-            </select>
-          </label>
-        </div>
-
-        <div className="tabs">
+        {/* Status Tabs */}
+        <div className="tabs" style={{ marginTop: 14 }}>
           <button
-            className={`tab ${tab === "active" ? "active" : ""}`}
-            onClick={() => setTab("active")}
+            className={`tab ${statusTab === "active" ? "active" : ""}`}
+            onClick={() => setStatusTab("active")}
           >
-            Active ({active.length})
+            Active
           </button>
           <button
-            className={`tab ${tab === "completed" ? "active" : ""}`}
-            onClick={() => setTab("completed")}
+            className={`tab ${statusTab === "completed" ? "active" : ""}`}
+            onClick={() => setStatusTab("completed")}
           >
-            Completed ({completed.length})
+            Completed
           </button>
         </div>
 
-        {tab === "active" && (
+        {/* Category Tabs */}
+        <div className="tabs" style={{ marginTop: 10 }}>
+          <button
+            className={`tab ${catTab === "WORK" ? "active" : ""}`}
+            onClick={() => setCatTab("WORK")}
+          >
+            Work
+          </button>
+          <button
+            className={`tab ${catTab === "PERSONAL" ? "active" : ""}`}
+            onClick={() => setCatTab("PERSONAL")}
+          >
+            Personal
+          </button>
+        </div>
+
+        {/* Add box */}
+        {statusTab === "active" && (
           <div className="add">
             <input
               className="input"
-              placeholder="New task..."
+              placeholder={`New ${catTab === "WORK" ? "work" : "personal"} task…`}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && addTask()}
             />
-            <select
-              className="input"
-              style={{ width: 160 }}
-              value={newCat}
-              onChange={(e) => setNewCat(e.target.value as Category)}
-            >
-              <option value="PERSONAL">Personal</option>
-              <option value="WORK">Work</option>
-            </select>
             <button className="btn primary" onClick={addTask}>Add</button>
           </div>
         )}
 
         <ul className="list">
           {list.map((t) => {
-            const from = tab;
+            const from = statusTab;
             const isEditing = editingId === t.id;
             return (
               <li key={t.id} className="item">
@@ -374,13 +356,6 @@ export default function App() {
                 {!isEditing ? (
                   <div className="task-main">
                     <div className="item-title">{t.title}</div>
-                    <div className="meta">
-                      <span>{t.category === "WORK" ? "Work" : "Personal"}</span>
-                      <span> • Created: {formatDate(t.createdAt)}</span>
-                      {t.completedAt && (
-                        <span> • Completed: {formatDate(t.completedAt)}</span>
-                      )}
-                    </div>
                   </div>
                 ) : (
                   <div className="task-edit" style={{ display: "grid", gap: 6, flex: 1 }}>
@@ -391,28 +366,61 @@ export default function App() {
                       onKeyDown={(e) => e.key === "Enter" && saveEdit(t)}
                       autoFocus
                     />
-                    <select
-                      className="input"
-                      value={editingCat}
-                      onChange={(e) => setEditingCat(e.target.value as Category)}
-                    >
-                      <option value="PERSONAL">Personal</option>
-                      <option value="WORK">Work</option>
-                    </select>
                   </div>
                 )}
 
-                {!isEditing ? (
-                  <>
-                    <button className="btn" onClick={() => beginEdit(t)}>Edit</button>
-                    <button className="btn danger" onClick={() => remove(t, from)}>Delete</button>
-                  </>
-                ) : (
-                  <>
-                    <button className="btn primary" onClick={() => saveEdit(t)}>Save</button>
-                    <button className="btn" onClick={cancelEdit}>Cancel</button>
-                  </>
-                )}
+                <div className="actions">
+                  {!isEditing ? (
+                    <>
+                      {/* Info */}
+                      <button
+                        className="icon-btn info"
+                        onClick={() => setInfoTask(t)}
+                        title="Info"
+                        aria-label="Task info"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                          <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="2"/>
+                          <circle cx="12" cy="8" r="1.25" fill="currentColor"/>
+                          <path d="M11.25 11h1.5v6h-1.5z" fill="currentColor"/>
+                        </svg>
+                      </button>
+
+                      {/* Edit (pencil) */}
+                      <button
+                        className="icon-btn edit"
+                        onClick={() => beginEdit(t)}
+                        title="Edit"
+                        aria-label="Edit task"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                          <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z" fill="currentColor"/>
+                          <path d="M20.71 7.04a1 1 0 0 0 0-1.41L18.37 3.3a1 1 0 0 0-1.41 0l-1.34 1.34 3.75 3.75 1.34-1.35z" fill="currentColor"/>
+                        </svg>
+                      </button>
+
+                      {/* Delete (real trash can) */}
+                      <button
+                        className="icon-btn delete"
+                        onClick={() => remove(t, from)}
+                        title="Delete"
+                        aria-label="Delete task"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                          <path d="M9 3h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                          <path d="M4 7h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                          <rect x="6.5" y="7" width="11" height="12" rx="2" ry="2" fill="none" stroke="currentColor" strokeWidth="2"/>
+                          <path d="M10 10v6M14 10v6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                        </svg>
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button className="btn primary" onClick={() => saveEdit(t)}>Save</button>
+                      <button className="btn" onClick={cancelEdit}>Cancel</button>
+                    </>
+                  )}
+                </div>
               </li>
             );
           })}
@@ -427,7 +435,6 @@ export default function App() {
                 <h3 style={{ margin: 0 }}>Account</h3>
                 <button className="btn" onClick={() => setShowAcct(false)}>Close</button>
               </div>
-
               <div style={{ marginTop: 12 }}>
                 {acctLoading && <p className="meta">Loading…</p>}
                 {!acctLoading && acct && (
@@ -438,6 +445,26 @@ export default function App() {
                     <li><strong>Completed tasks:</strong> {acct.completedCount}</li>
                   </ul>
                 )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Task info modal */}
+        {infoTask && (
+          <div className="overlay" onClick={() => setInfoTask(null)}>
+            <div className="modal" onClick={(e) => e.stopPropagation()}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <h3 style={{ margin: 0 }}>Task Info</h3>
+                <button className="btn" onClick={() => setInfoTask(null)}>Close</button>
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <ul className="account-list">
+                  <li><strong>Created:</strong> {formatDate(infoTask.createdAt)}</li>
+                  {infoTask.completedAt && (
+                    <li><strong>Completed:</strong> {formatDate(infoTask.completedAt)}</li>
+                  )}
+                </ul>
               </div>
             </div>
           </div>
