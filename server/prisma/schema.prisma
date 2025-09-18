@@ -7,17 +7,17 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum Category {
+  WORK
+  PERSONAL
+}
+
 model User {
   id        String   @id @default(cuid())
   email     String   @unique
   password  String
   tasks     Task[]
   createdAt DateTime @default(now())
-}
-
-enum Category {
-  WORK
-  PERSONAL
 }
 
 model Task {
@@ -29,6 +29,7 @@ model Task {
 
   createdAt    DateTime  @default(now())
   completedAt  DateTime?
-
+  dueDate      DateTime?          // stays the same
+  sortIndex    Int       @default(0) @map("order") // <-- rename field, keep DB column "order"
   category     Category  @default(PERSONAL)
 }

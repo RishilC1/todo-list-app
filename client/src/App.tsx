@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "./api";
+import { DragDropContext, Droppable, Draggable, DropResult } from "@hello-pangea/dnd";
 
 type Category = "WORK" | "PERSONAL";
 
@@ -9,7 +10,11 @@ type Task = {
   done: boolean;
   createdAt: string;
   completedAt?: string | null;
+  dueDate?: string | null;
   category: Category;
+  // accept either field name to survive schema/client drift
+  sortIndex?: number;
+  order?: number;
 };
 
 type AccountSummary = {
@@ -21,69 +26,67 @@ type AccountSummary = {
 
 function formatDate(dt?: string | null) {
   if (!dt) return "";
-  return new Date(dt).toLocaleString();
+  const d = new Date(dt);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString();
 }
 
 export default function App() {
-  // ---------- Auth ----------
+  const [dark, setDark] = useState(false);
+  useEffect(() => {
+    document.body.classList.toggle("dark", dark);
+    return () => document.body.classList.remove("dark");
+  }, [dark]);
+
+  const [authed, setAuthed] = useState(false);
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [pwd, setPwd] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
-  const [authed, setAuthed] = useState(false);
 
-  // ---------- Tabs ----------
   const [statusTab, setStatusTab] = useState<"active" | "completed">("active");
   const [catTab, setCatTab] = useState<Category>("PERSONAL");
 
-  // ---------- Tasks ----------
-  const [active, setActive] = useState<Task[]>([]);
-  const [completed, setCompleted] = useState<Task[]>([]);
-  const [title, setTitle] = useState("");
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const activeTasks = useMemo(() => tasks.filter(t => !t.done), [tasks]);
+  const completedTasks = useMemo(() => tasks.filter(t => t.done), [tasks]);
+  const currentList = statusTab === "active" ? activeTasks : completedTasks;
 
-  // ---------- Editing ----------
+  const [title, setTitle] = useState("");
+  const [dueDate, setDueDate] = useState(""); // yyyy-mm-dd
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
 
-  // ---------- Info modal ----------
   const [infoTask, setInfoTask] = useState<Task | null>(null);
-
-  // ---------- Account modal ----------
   const [showAcct, setShowAcct] = useState(false);
   const [acct, setAcct] = useState<AccountSummary | null>(null);
   const [acctLoading, setAcctLoading] = useState(false);
 
-  async function loadLists() {
-    const q = (isCompleted: boolean) => {
-      const params = new URLSearchParams({
-        completed: String(isCompleted),
-        category: catTab,
-      });
-      return params.toString();
-    };
-    const [a, c] = await Promise.all([
-      api.get(`tasks?${q(false)}`).json<Task[]>(),
-      api.get(`tasks?${q(true)}`).json<Task[]>(),
-    ]);
-    setActive(a);
-    setCompleted(c);
-    setAuthed(true);
-  }
-
   useEffect(() => {
     fetch("http://localhost:4000/api/auth/me", { credentials: "include" })
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then(() => loadLists())
+      .then(r => (r.ok ? r.json() : Promise.reject()))
+      .then(() => setAuthed(true))
       .catch(() => setAuthed(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  async function loadTasks() {
+    const qs = new URLSearchParams({
+      completed: String(statusTab === "completed"),
+      category: catTab,
+    }).toString();
+    const data = await api.get(`tasks?${qs}`).json<Task[]>();
+    // normalize: ensure we always have sortIndex on the client
+    const normalized = data.map(t => ({
+      ...t,
+      sortIndex: typeof t.sortIndex === "number" ? t.sortIndex : t.order ?? 0,
+    }));
+    setTasks(normalized);
+  }
   useEffect(() => {
-    if (authed) loadLists();
+    if (authed) loadTasks();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [catTab]);
+  }, [authed, statusTab, catTab]);
 
-  // ---------- Auth actions ----------
   async function signin() {
     setMsg(null);
     const res = await fetch("http://localhost:4000/api/auth/signin", {
@@ -97,7 +100,8 @@ export default function App() {
       setMsg((body as any)?.message || "Internal error");
       return;
     }
-    await loadLists();
+    setAuthed(true);
+    await loadTasks();
   }
 
   async function signup() {
@@ -113,7 +117,8 @@ export default function App() {
       setMsg((body as any)?.message || "Internal error");
       return;
     }
-    await loadLists();
+    setAuthed(true);
+    await loadTasks();
   }
 
   async function signout() {
@@ -122,75 +127,92 @@ export default function App() {
       credentials: "include",
     });
     setAuthed(false);
-    setActive([]);
-    setCompleted([]);
+    setTasks([]);
     setEmail("");
     setPwd("");
     setMode("signin");
   }
 
-  // ---------- Tasks actions ----------
   async function addTask() {
     const t = title.trim();
     if (!t) return;
-    try {
-      const newTask = await api
-        .post("tasks", { json: { title: t, category: catTab } })
-        .json<Task>();
-      if (statusTab === "active") setActive([newTask, ...active]);
-      setTitle("");
-      setStatusTab("active");
-    } catch (e: any) {
-      setMsg(e?.message || "Failed to add task");
-    }
+    const payload: any = { title: t, category: catTab };
+    if (dueDate) payload.dueDate = new Date(dueDate).toISOString();
+    const created = await api.post("tasks", { json: payload }).json<Task>();
+    setTasks(prev => [
+      ...prev,
+      { ...created, sortIndex: (created as any).sortIndex ?? (created as any).order ?? prev.length },
+    ]);
+    setTitle("");
+    setDueDate("");
+    setStatusTab("active");
   }
 
-  function beginEdit(t: Task) {
-    setEditingId(t.id);
-    setEditingTitle(t.title);
+  function beginEdit(task: Task) {
+    setEditingId(task.id);
+    setEditingTitle(task.title);
   }
   function cancelEdit() {
     setEditingId(null);
     setEditingTitle("");
   }
-  async function saveEdit(t: Task) {
+  async function saveEdit(task: Task) {
     const nt = editingTitle.trim();
-    if (!nt || nt === t.title) {
+    if (!nt || nt === task.title) {
       cancelEdit();
       return;
     }
-    const updated = await api
-      .patch(`tasks/${t.id}`, { json: { title: nt } })
-      .json<Task>();
-
-    if (!t.done) {
-      setActive(active.map((x) => (x.id === t.id ? updated : x)));
-    } else {
-      setCompleted(completed.map((x) => (x.id === t.id ? updated : x)));
-    }
+    const updated = await api.patch(`tasks/${task.id}`, { json: { title: nt } }).json<Task>();
+    setTasks(prev => prev.map(t => (t.id === task.id ? { ...t, ...updated } : t)));
     cancelEdit();
   }
 
-  async function toggle(task: Task, from: "active" | "completed") {
+  async function toggle(task: Task) {
     const updated = await api
       .patch(`tasks/${task.id}`, { json: { done: !task.done } })
       .json<Task>();
-    if (from === "active") {
-      setActive(active.filter((x) => x.id !== task.id));
-      setCompleted([updated, ...completed]);
-    } else {
-      setCompleted(completed.filter((x) => x.id !== task.id));
-      setActive([updated, ...active]);
-    }
+    setTasks(prev => prev.map(t => (t.id === task.id ? { ...t, ...updated } : t)));
   }
 
-  async function remove(task: Task, from: "active" | "completed") {
+  async function remove(task: Task) {
     await api.delete(`tasks/${task.id}`).json();
-    if (from === "active") setActive(active.filter((x) => x.id !== task.id));
-    else setCompleted(completed.filter((x) => x.id !== task.id));
+    setTasks(prev => prev.filter(t => t.id !== task.id));
   }
 
-  // ---------- Account modal ----------
+  // Drag & drop: send { order } to server (it maps to sortIndex)
+  async function onDragEnd(result: DropResult) {
+    if (!result.destination) return;
+    const src = result.source.index;
+    const dst = result.destination.index;
+
+    const idsInCurrent = currentList.map(t => t.id);
+    if (src === dst) return;
+
+    setTasks(prev => {
+      const copy = [...prev];
+
+      const indices = copy
+        .map((t, i) => ({ id: t.id, i }))
+        .filter(x => idsInCurrent.includes(x.id))
+        .map(x => x.i);
+
+      const visible = indices.map(i => copy[i]);
+      const [moved] = visible.splice(src, 1);
+      visible.splice(dst, 0, moved);
+
+      visible.forEach((t, idx) => {
+        const gi = indices[idx];
+        copy[gi] = { ...t, sortIndex: idx };
+      });
+
+      visible.forEach((t, idx) => {
+        api.patch(`tasks/${t.id}`, { json: { order: idx } }).catch(() => {});
+      });
+
+      return copy;
+    });
+  }
+
   async function openAccount() {
     setShowAcct(true);
     setAcctLoading(true);
@@ -204,15 +226,12 @@ export default function App() {
     }
   }
 
-  // ---------- AUTH VIEW ----------
   if (!authed) {
     return (
       <div className="auth-min">
         <div className="auth-box">
           <h1 className="brand">Taskanizer</h1>
-
           {msg && <p className="auth-error">{msg}</p>}
-
           <input
             className="auth-input"
             placeholder="email"
@@ -229,53 +248,35 @@ export default function App() {
               e.key === "Enter" && (mode === "signin" ? signin() : signup())
             }
           />
-
+          <div style={{ display: "flex", gap: 10 }}>
+            <button className="auth-button" onClick={() => setDark(d => !d)}>
+              {dark ? "☀️ Light" : "🌙 Dark"}
+            </button>
+            {mode === "signin" ? (
+              <button className="auth-button" onClick={signin}>Sign in</button>
+            ) : (
+              <button className="auth-button" onClick={signup}>Sign up</button>
+            )}
+          </div>
           {mode === "signin" ? (
-            <>
-              <button className="auth-button" onClick={signin}>
-                Sign in
-              </button>
-              <p className="auth-switch">
-                Don’t have an account?{" "}
-                <a
-                  href="#"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setMode("signup");
-                    setMsg(null);
-                  }}
-                >
-                  sign up
-                </a>
-              </p>
-            </>
+            <p className="auth-switch">
+              Don’t have an account?{" "}
+              <a href="#" onClick={(e) => { e.preventDefault(); setMode("signup"); setMsg(null); }}>
+                sign up
+              </a>
+            </p>
           ) : (
-            <>
-              <button className="auth-button" onClick={signup}>
-                Sign up
-              </button>
-              <p className="auth-switch">
-                Already have an account?{" "}
-                <a
-                  href="#"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setMode("signin");
-                    setMsg(null);
-                  }}
-                >
-                  sign in
-                </a>
-              </p>
-            </>
+            <p className="auth-switch">
+              Already have an account?{" "}
+              <a href="#" onClick={(e) => { e.preventDefault(); setMode("signin"); setMsg(null); }}>
+                sign in
+              </a>
+            </p>
           )}
         </div>
       </div>
     );
   }
-
-  // ---------- TASKS VIEW ----------
-  const list = statusTab === "active" ? active : completed;
 
   return (
     <div className="app-shell">
@@ -283,50 +284,37 @@ export default function App() {
         <div className="app-header">
           <h2 className="title">Tasks</h2>
           <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-  <button className="profile-btn" onClick={openAccount} title="Account">
-    <div className="avatar-icon">
-      <div className="avatar-head"></div>
-      <div className="avatar-body"></div>
-    </div>
-  </button>
-  <button className="btn" onClick={signout}>Sign out</button>
-</div>
-
+            <button className="profile-btn" onClick={openAccount} title="Account">
+              <div className="avatar-icon">
+                <div className="avatar-head"></div>
+                <div className="avatar-body"></div>
+              </div>
+            </button>
+            <button className="btn" onClick={() => setDark(d => !d)}>
+              {dark ? "☀️ Light" : "🌙 Dark"}
+            </button>
+            <button className="btn" onClick={signout}>Sign out</button>
+          </div>
         </div>
 
-        {/* Status Tabs */}
-        <div className="tabs" style={{ marginTop: 14 }}>
-          <button
-            className={`tab ${statusTab === "active" ? "active" : ""}`}
-            onClick={() => setStatusTab("active")}
-          >
+        <div className="tabs">
+          <button className={`tab ${statusTab === "active" ? "active" : ""}`} onClick={() => setStatusTab("active")}>
             Active
           </button>
-          <button
-            className={`tab ${statusTab === "completed" ? "active" : ""}`}
-            onClick={() => setStatusTab("completed")}
-          >
+          <button className={`tab ${statusTab === "completed" ? "active" : ""}`} onClick={() => setStatusTab("completed")}>
             Completed
           </button>
         </div>
 
-        {/* Category Tabs */}
-        <div className="tabs" style={{ marginTop: 10 }}>
-          <button
-            className={`tab ${catTab === "WORK" ? "active" : ""}`}
-            onClick={() => setCatTab("WORK")}
-          >
+        <div className="tabs">
+          <button className={`tab ${catTab === "WORK" ? "active" : ""}`} onClick={() => setCatTab("WORK")}>
             Work
           </button>
-          <button
-            className={`tab ${catTab === "PERSONAL" ? "active" : ""}`}
-            onClick={() => setCatTab("PERSONAL")}
-          >
+          <button className={`tab ${catTab === "PERSONAL" ? "active" : ""}`} onClick={() => setCatTab("PERSONAL")}>
             Personal
           </button>
         </div>
 
-        {/* Add box */}
         {statusTab === "active" && (
           <div className="add">
             <input
@@ -336,98 +324,99 @@ export default function App() {
               onChange={(e) => setTitle(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && addTask()}
             />
+            <input
+              className="input"
+              type="date"
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+              title="Due date"
+            />
             <button className="btn primary" onClick={addTask}>Add</button>
           </div>
         )}
 
-        <ul className="list">
-          {list.map((t) => {
-            const from = statusTab;
-            const isEditing = editingId === t.id;
-            return (
-              <li key={t.id} className="item">
-                <input
-                  type="checkbox"
-                  checked={t.done}
-                  onChange={() => toggle(t, from)}
-                  title={from === "active" ? "Complete task" : "Mark as active"}
-                />
-
-                {!isEditing ? (
-                  <div className="task-main">
-                    <div className="item-title">{t.title}</div>
-                  </div>
-                ) : (
-                  <div className="task-edit" style={{ display: "grid", gap: 6, flex: 1 }}>
-                    <input
-                      className="input"
-                      value={editingTitle}
-                      onChange={(e) => setEditingTitle(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && saveEdit(t)}
-                      autoFocus
-                    />
-                  </div>
-                )}
-
-                <div className="actions">
-                  {!isEditing ? (
-                    <>
-                      {/* Info */}
-                      <button
-                        className="icon-btn info"
-                        onClick={() => setInfoTask(t)}
-                        title="Info"
-                        aria-label="Task info"
+        <DragDropContext onDragEnd={onDragEnd}>
+          <Droppable droppableId="tasks-droppable">
+            {(dropProvided) => (
+              <ul className="list" ref={dropProvided.innerRef} {...dropProvided.droppableProps}>
+                {currentList.map((t, idx) => (
+                  <Draggable draggableId={t.id} index={idx} key={t.id}>
+                    {(dragProvided) => (
+                      <li
+                        className="item"
+                        ref={dragProvided.innerRef}
+                        {...dragProvided.draggableProps}
+                        {...dragProvided.dragHandleProps}
                       >
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                          <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="2"/>
-                          <circle cx="12" cy="8" r="1.25" fill="currentColor"/>
-                          <path d="M11.25 11h1.5v6h-1.5z" fill="currentColor"/>
-                        </svg>
-                      </button>
+                        <input
+                          type="checkbox"
+                          checked={t.done}
+                          onChange={() => toggle(t)}
+                          title={t.done ? "Mark as active" : "Complete task"}
+                        />
 
-                      {/* Edit (pencil) */}
-                      <button
-                        className="icon-btn edit"
-                        onClick={() => beginEdit(t)}
-                        title="Edit"
-                        aria-label="Edit task"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                          <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z" fill="currentColor"/>
-                          <path d="M20.71 7.04a1 1 0 0 0 0-1.41L18.37 3.3a1 1 0 0 0-1.41 0l-1.34 1.34 3.75 3.75 1.34-1.35z" fill="currentColor"/>
-                        </svg>
-                      </button>
+                        {editingId !== t.id ? (
+                          <div className="task-main">
+                            <div className="item-title">{t.title}</div>
+                            <div className="meta">
+                              {t.dueDate ? `⏰ Due: ${new Date(t.dueDate).toLocaleDateString()}` : ""}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="task-edit" style={{ display: "grid", gap: 6, flex: 1 }}>
+                            <input
+                              className="input"
+                              value={editingTitle}
+                              onChange={(e) => setEditingTitle(e.target.value)}
+                              onKeyDown={(e) => e.key === "Enter" && saveEdit(t)}
+                              autoFocus
+                            />
+                          </div>
+                        )}
 
-                      {/* Delete (real trash can) */}
-                      <button
-                        className="icon-btn delete"
-                        onClick={() => remove(t, from)}
-                        title="Delete"
-                        aria-label="Delete task"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                          <path d="M9 3h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                          <path d="M4 7h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                          <rect x="6.5" y="7" width="11" height="12" rx="2" ry="2" fill="none" stroke="currentColor" strokeWidth="2"/>
-                          <path d="M10 10v6M14 10v6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                        </svg>
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button className="btn primary" onClick={() => saveEdit(t)}>Save</button>
-                      <button className="btn" onClick={cancelEdit}>Cancel</button>
-                    </>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-          {list.length === 0 && <li className="empty">No tasks here yet.</li>}
-        </ul>
+                        <div className="actions">
+                          {editingId !== t.id ? (
+                            <>
+                              <button className="icon-btn info" onClick={() => setInfoTask(t)} title="Info" aria-label="Task info">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                                  <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="2"/>
+                                  <circle cx="12" cy="8" r="1.25" fill="currentColor"/>
+                                  <path d="M11.25 11h1.5v6h-1.5z" fill="currentColor"/>
+                                </svg>
+                              </button>
+                              <button className="icon-btn edit" onClick={() => beginEdit(t)} title="Edit" aria-label="Edit task">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                                  <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z" fill="currentColor"/>
+                                  <path d="M20.71 7.04a1 1 0 0 0 0-1.41L18.37 3.3a1 1 0 0 0-1.41 0l-1.34 1.34 3.75 3.75 1.34-1.35z" fill="currentColor"/>
+                                </svg>
+                              </button>
+                              <button className="icon-btn delete" onClick={() => remove(t)} title="Delete" aria-label="Delete task">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                                  <path d="M9 3h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                                  <path d="M4 7h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                                  <rect x="6.5" y="7" width="11" height="12" rx="2" ry="2" fill="none" stroke="currentColor" strokeWidth="2"/>
+                                  <path d="M10 10v6M14 10v6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                                </svg>
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button className="btn primary" onClick={() => saveEdit(t)}>Save</button>
+                              <button className="btn" onClick={cancelEdit}>Cancel</button>
+                            </>
+                          )}
+                        </div>
+                      </li>
+                    )}
+                  </Draggable>
+                ))}
+                {dropProvided.placeholder}
+                {currentList.length === 0 && <li className="empty">No tasks here yet.</li>}
+              </ul>
+            )}
+          </Droppable>
+        </DragDropContext>
 
-        {/* Account modal */}
         {showAcct && (
           <div className="overlay" onClick={() => setShowAcct(false)}>
             <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -450,7 +439,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Task info modal */}
         {infoTask && (
           <div className="overlay" onClick={() => setInfoTask(null)}>
             <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -461,9 +449,9 @@ export default function App() {
               <div style={{ marginTop: 12 }}>
                 <ul className="account-list">
                   <li><strong>Created:</strong> {formatDate(infoTask.createdAt)}</li>
-                  {infoTask.completedAt && (
-                    <li><strong>Completed:</strong> {formatDate(infoTask.completedAt)}</li>
-                  )}
+                  {infoTask.dueDate && <li><strong>Due:</strong> {formatDate(infoTask.dueDate)}</li>}
+                  {infoTask.completedAt && <li><strong>Completed:</strong> {formatDate(infoTask.completedAt)}</li>}
+                  <li><strong>Category:</strong> {infoTask.category === "WORK" ? "Work" : "Personal"}</li>
                 </ul>
               </div>
             </div>
