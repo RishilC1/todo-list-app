@@ -63,8 +63,8 @@ export default function App() {
   const [acctLoading, setAcctLoading] = useState(false);
 
   useEffect(() => {
-    fetch("http://localhost:4000/api/auth/me", { credentials: "include" })
-      .then(r => (r.ok ? r.json() : Promise.reject()))
+    api.get("auth/me")
+      .json()
       .then(() => setAuthed(true))
       .catch(() => setAuthed(false));
   }, []);
@@ -89,43 +89,28 @@ export default function App() {
 
   async function signin() {
     setMsg(null);
-    const res = await fetch("http://localhost:4000/api/auth/signin", {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password: pwd }),
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      setMsg((body as any)?.message || "Internal error");
-      return;
+    try {
+      await api.post("auth/signin", { json: { email, password: pwd } }).json();
+      setAuthed(true);
+      await loadTasks();
+    } catch (e: any) {
+      setMsg(e?.message || "Internal error");
     }
-    setAuthed(true);
-    await loadTasks();
   }
 
   async function signup() {
     setMsg(null);
-    const res = await fetch("http://localhost:4000/api/auth/signup", {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password: pwd }),
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      setMsg((body as any)?.message || "Internal error");
-      return;
+    try {
+      await api.post("auth/signup", { json: { email, password: pwd } }).json();
+      setAuthed(true);
+      await loadTasks();
+    } catch (e: any) {
+      setMsg(e?.message || "Internal error");
     }
-    setAuthed(true);
-    await loadTasks();
   }
 
   async function signout() {
-    await fetch("http://localhost:4000/api/auth/signout", {
-      method: "POST",
-      credentials: "include",
-    });
+    await api.post("auth/signout").json();
     setAuthed(false);
     setTasks([]);
     setEmail("");

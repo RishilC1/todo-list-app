@@ -7,8 +7,13 @@ import authRouter from "./routes/auth";
 import tasksRouter from "./routes/tasks";
 import accountRouter from "./routes/account";
 import { requireAuth } from "./middleware/requireAuth";
+import { PrismaClient } from "@prisma/client";
 
 const app = express();
+
+// Initialize a single PrismaClient for the process (warm-up early)
+// and allow routers to import from a shared module if needed later.
+export const prisma = new PrismaClient();
 
 const corsOrigins: (string | RegExp)[] =
   process.env.NODE_ENV === "production"

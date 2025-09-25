@@ -1,7 +1,6 @@
 import { Router } from "express";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../db";
 
-const prisma = new PrismaClient();
 const r = Router();
 
 type ReqU = Express.Request & { userId?: string };

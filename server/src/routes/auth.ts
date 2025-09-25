@@ -1,10 +1,9 @@
 import { Router } from "express";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../db";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
 
-const prisma = new PrismaClient();
 const r = Router();
 
 const creds = z.object({
@@ -14,7 +13,7 @@ const creds = z.object({
 
 function setTokenCookie(res: any, token: string) {
   const isProd = process.env.NODE_ENV === "production";
-  res.cookie(process.env.COOKIE_NAME || "token", token, {
+  res.cookie(process.env.COOKIE_NAME || "todolist_token", token, {
     httpOnly: true,
     sameSite: isProd ? "none" : "lax",
     secure: isProd,
@@ -71,7 +70,7 @@ r.post("/signin", async (req, res) => {
 
 r.get("/me", async (req: any, res) => {
   try {
-    const token = req.cookies?.[process.env.COOKIE_NAME || "token"];
+    const token = req.cookies?.[process.env.COOKIE_NAME || "todolist_token"];
     if (!token) return res.status(401).json({ message: "Unauthenticated" });
     const payload = jwt.verify(token, requireSecret()) as { sub: string };
     const user = await prisma.user.findUnique({ where: { id: payload.sub }, select: { id: true, email: true } });
@@ -83,7 +82,7 @@ r.get("/me", async (req: any, res) => {
 });
 
 r.post("/signout", (_req, res) => {
-  res.clearCookie(process.env.COOKIE_NAME || "token");
+  res.clearCookie(process.env.COOKIE_NAME || "todolist_token");
   res.json({ ok: true });
 });
 

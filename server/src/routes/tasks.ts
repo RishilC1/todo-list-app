@@ -1,8 +1,7 @@
 import { Router, Request, Response } from "express";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../db";
 import { z } from "zod";
 
-const prisma = new PrismaClient();
 const r = Router();
 
 type ReqU<T = any, B = any, Q = any> = Request<T, any, B, Q> & { userId?: string };
@@ -107,7 +106,9 @@ r.patch(
 // DELETE /api/tasks/:id
 r.delete("/:id", async (req: ReqU<{ id: string }>, res: Response) => {
   if (!req.userId) return res.status(401).json({ message: "Unauthenticated" });
-  await prisma.task.delete({ where: { id: req.params.id } });
+  const existing = await prisma.task.findFirst({ where: { id: req.params.id, userId: req.userId } });
+  if (!existing) return res.status(404).json({ message: "Not found" });
+  await prisma.task.delete({ where: { id: existing.id } });
   res.json({ ok: true });
 });
 
